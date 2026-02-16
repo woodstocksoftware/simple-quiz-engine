@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 const WS_URL = 'ws://localhost:8000'
 
@@ -12,39 +12,15 @@ function QuizSession({ sessionId, onComplete }) {
   const [selectedAnswer, setSelectedAnswer] = useState(null)
   const [answers, setAnswers] = useState({})
   const [started, setStarted] = useState(false)
-  
+
   const ws = useRef(null)
+  const onCompleteRef = useRef(onComplete)
 
   useEffect(() => {
-    ws.current = new WebSocket(`${WS_URL}/ws/${sessionId}`)
-    
-    ws.current.onopen = () => {
-      console.log('WebSocket connected')
-      setConnected(true)
-    }
-    
-    ws.current.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      handleMessage(data)
-    }
-    
-    ws.current.onclose = () => {
-      console.log('WebSocket disconnected')
-      setConnected(false)
-    }
-    
-    ws.current.onerror = (error) => {
-      console.error('WebSocket error:', error)
-    }
-    
-    return () => {
-      if (ws.current) ws.current.close()
-    }
-  }, [sessionId])
+    onCompleteRef.current = onComplete
+  }, [onComplete])
 
-  const handleMessage = (data) => {
-    console.log('Received:', data)
-    
+  const handleMessage = useCallback((data) => {
     switch (data.type) {
       case 'connected':
         setQuiz(data.quiz)
@@ -63,10 +39,35 @@ function QuizSession({ sessionId, onComplete }) {
       case 'answer_received':
         break
       case 'quiz_complete':
-        onComplete(data)
+        onCompleteRef.current(data)
         break
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    ws.current = new WebSocket(`${WS_URL}/ws/${sessionId}`)
+
+    ws.current.onopen = () => {
+      setConnected(true)
+    }
+
+    ws.current.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      handleMessage(data)
+    }
+
+    ws.current.onclose = () => {
+      setConnected(false)
+    }
+
+    ws.current.onerror = (error) => {
+      console.error('WebSocket error:', error)
+    }
+
+    return () => {
+      if (ws.current) ws.current.close()
+    }
+  }, [sessionId, handleMessage])
 
   const send = (message) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
@@ -88,7 +89,7 @@ function QuizSession({ sessionId, onComplete }) {
   const handleNext = () => send({ type: 'next_question', current: questionNumber })
   const handlePrev = () => send({ type: 'prev_question', current: questionNumber })
   const handleGoTo = (num) => send({ type: 'go_to_question', question_number: num })
-  
+
   const handleSubmit = () => {
     if (confirm('Are you sure you want to submit?')) {
       send({ type: 'submit_quiz' })
@@ -109,8 +110,8 @@ function QuizSession({ sessionId, onComplete }) {
         <h1>{quiz?.title}</h1>
         <p>{quiz?.description}</p>
         <div className="quiz-info">
-          <p>📊 {totalQuestions} questions</p>
-          <p>⏱️ {formatTime(timeRemaining)} time limit</p>
+          <p>{totalQuestions} questions</p>
+          <p>{formatTime(timeRemaining)} time limit</p>
         </div>
         <button className="start-btn" onClick={handleStart}>Begin Quiz</button>
       </div>
@@ -122,7 +123,7 @@ function QuizSession({ sessionId, onComplete }) {
       <div className="quiz-header">
         <div className="quiz-title">{quiz?.title}</div>
         <div className={`timer ${timeRemaining < 60 ? 'warning' : ''}`}>
-          ⏱️ {formatTime(timeRemaining)}
+          {formatTime(timeRemaining)}
         </div>
       </div>
 
@@ -163,10 +164,10 @@ function QuizSession({ sessionId, onComplete }) {
 
       <div className="quiz-footer">
         <button className="nav-btn-large" onClick={handlePrev} disabled={questionNumber <= 1}>
-          ← Previous
+          Previous
         </button>
         {questionNumber < totalQuestions ? (
-          <button className="nav-btn-large primary" onClick={handleNext}>Next →</button>
+          <button className="nav-btn-large primary" onClick={handleNext}>Next</button>
         ) : (
           <button className="nav-btn-large submit" onClick={handleSubmit}>Submit Quiz</button>
         )}

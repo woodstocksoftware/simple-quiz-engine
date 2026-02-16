@@ -6,10 +6,13 @@ Handles schema creation, CRUD operations, scoring, and seed data.
 """
 
 import json
+import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 DATABASE_PATH = Path(__file__).parent.parent / "data" / "quiz.db"
 
@@ -25,66 +28,76 @@ def get_connection() -> sqlite3.Connection:
 def init_database() -> None:
     """Create all tables and indexes if they don't already exist."""
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
 
-    cursor.executescript("""
-        -- Quizzes
-        CREATE TABLE IF NOT EXISTS quizzes (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT,
-            time_limit_seconds INTEGER NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
+        cursor.executescript("""
+            -- Quizzes
+            CREATE TABLE IF NOT EXISTS quizzes (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                time_limit_seconds INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
 
-        -- Questions
-        CREATE TABLE IF NOT EXISTS questions (
-            id TEXT PRIMARY KEY,
-            quiz_id TEXT NOT NULL,
-            question_number INTEGER NOT NULL,
-            question_text TEXT NOT NULL,
-            question_type TEXT DEFAULT 'multiple_choice',
-            options TEXT,  -- JSON array
-            correct_answer TEXT NOT NULL,
-            points INTEGER DEFAULT 1,
-            FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
-        );
+            -- Questions
+            CREATE TABLE IF NOT EXISTS questions (
+                id TEXT PRIMARY KEY,
+                quiz_id TEXT NOT NULL,
+                question_number INTEGER NOT NULL,
+                question_text TEXT NOT NULL,
+                question_type TEXT DEFAULT 'multiple_choice',
+                options TEXT,  -- JSON array
+                correct_answer TEXT NOT NULL,
+                points INTEGER DEFAULT 1,
+                FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
+            );
 
-        -- Quiz Sessions (a student taking a quiz)
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            quiz_id TEXT NOT NULL,
-            student_name TEXT,
-            started_at TEXT,
-            completed_at TEXT,
-            time_remaining_seconds INTEGER,
-            current_question INTEGER DEFAULT 1,
-            status TEXT DEFAULT 'not_started',  -- not_started, in_progress, completed
-            score REAL,
-            FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
-        );
+            -- Quiz Sessions (a student taking a quiz)
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                quiz_id TEXT NOT NULL,
+                student_name TEXT,
+                token TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                time_remaining_seconds INTEGER,
+                current_question INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'not_started',
+                score REAL,
+                FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
+            );
 
-        -- Responses
-        CREATE TABLE IF NOT EXISTS responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            question_id TEXT NOT NULL,
-            answer TEXT,
-            is_correct INTEGER,
-            time_spent_seconds INTEGER DEFAULT 0,
-            answered_at TEXT,
-            FOREIGN KEY (session_id) REFERENCES sessions(id),
-            FOREIGN KEY (question_id) REFERENCES questions(id),
-            UNIQUE(session_id, question_id)
-        );
+            -- Responses
+            CREATE TABLE IF NOT EXISTS responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                question_id TEXT NOT NULL,
+                answer TEXT,
+                is_correct INTEGER,
+                time_spent_seconds INTEGER DEFAULT 0,
+                answered_at TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(id),
+                FOREIGN KEY (question_id) REFERENCES questions(id),
+                UNIQUE(session_id, question_id)
+            );
 
-        CREATE INDEX IF NOT EXISTS idx_questions_quiz ON questions(quiz_id);
-        CREATE INDEX IF NOT EXISTS idx_sessions_quiz ON sessions(quiz_id);
-        CREATE INDEX IF NOT EXISTS idx_responses_session ON responses(session_id);
-    """)
+            CREATE INDEX IF NOT EXISTS idx_questions_quiz ON questions(quiz_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_quiz ON sessions(quiz_id);
+            CREATE INDEX IF NOT EXISTS idx_responses_session ON responses(session_id);
+        """)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+        # Migration: add token column if missing (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN token TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+    finally:
+        conn.close()
 
 
 init_database()
@@ -98,15 +111,15 @@ def create_quiz(quiz_id: str, title: str, time_limit_seconds: int,
                 description: Optional[str] = None) -> dict:
     """Insert a new quiz and return its basic info."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO quizzes (id, title, description, time_limit_seconds)
-        VALUES (?, ?, ?, ?)
-    """, (quiz_id, title, description, time_limit_seconds))
-
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO quizzes (id, title, description, time_limit_seconds)
+            VALUES (?, ?, ?, ?)
+        """, (quiz_id, title, description, time_limit_seconds))
+        conn.commit()
+    finally:
+        conn.close()
 
     return {"id": quiz_id, "title": title, "time_limit_seconds": time_limit_seconds}
 
@@ -114,11 +127,12 @@ def create_quiz(quiz_id: str, title: str, time_limit_seconds: int,
 def get_quiz(quiz_id: str) -> Optional[dict]:
     """Fetch a quiz by ID, or return None if not found."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,))
-    row = cursor.fetchone()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,))
+        row = cursor.fetchone()
+    finally:
+        conn.close()
 
     return dict(row) if row else None
 
@@ -128,17 +142,17 @@ def add_question(question_id: str, quiz_id: str, question_number: int,
                  points: int = 1) -> dict:
     """Add a question to a quiz. Options are stored as a JSON string."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO questions (id, quiz_id, question_number, question_text,
-                               options, correct_answer, points)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (question_id, quiz_id, question_number, question_text,
-          json.dumps(options), correct_answer, points))
-
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO questions (id, quiz_id, question_number, question_text,
+                                   options, correct_answer, points)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (question_id, quiz_id, question_number, question_text,
+              json.dumps(options), correct_answer, points))
+        conn.commit()
+    finally:
+        conn.close()
 
     return {"id": question_id, "question_number": question_number}
 
@@ -146,14 +160,37 @@ def add_question(question_id: str, quiz_id: str, question_number: int,
 def get_questions(quiz_id: str) -> list[dict]:
     """Return all questions for a quiz, ordered by question_number."""
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM questions WHERE quiz_id = ? ORDER BY question_number
+        """, (quiz_id,))
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
 
-    cursor.execute("""
-        SELECT * FROM questions WHERE quiz_id = ? ORDER BY question_number
-    """, (quiz_id,))
+    questions: list[dict] = []
+    for row in rows:
+        q = dict(row)
+        q['options'] = json.loads(q['options']) if q['options'] else []
+        questions.append(q)
 
-    rows = cursor.fetchall()
-    conn.close()
+    return questions
+
+
+def get_questions_for_client(quiz_id: str) -> list[dict]:
+    """Return questions without correct_answer, safe to hold during a session."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, quiz_id, question_number, question_text, question_type,
+                   options, points
+            FROM questions WHERE quiz_id = ? ORDER BY question_number
+        """, (quiz_id,))
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
 
     questions: list[dict] = []
     for row in rows:
@@ -167,11 +204,12 @@ def get_questions(quiz_id: str) -> list[dict]:
 def get_question(question_id: str) -> Optional[dict]:
     """Fetch a single question by ID with parsed options."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM questions WHERE id = ?", (question_id,))
-    row = cursor.fetchone()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM questions WHERE id = ?", (question_id,))
+        row = cursor.fetchone()
+    finally:
+        conn.close()
 
     if row:
         q = dict(row)
@@ -184,28 +222,30 @@ def get_question(question_id: str) -> Optional[dict]:
 # SESSION OPERATIONS
 # ============================================================
 
-def create_session(session_id: str, quiz_id: str,
+def create_session(session_id: str, quiz_id: str, token: str,
                    student_name: Optional[str] = None) -> dict:
     """Create a new quiz session with time inherited from the quiz."""
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        quiz = get_quiz(quiz_id)
+        if not quiz:
+            raise ValueError(f"Quiz not found: {quiz_id}")
 
-    quiz = get_quiz(quiz_id)
-    if not quiz:
-        raise ValueError(f"Quiz not found: {quiz_id}")
-
-    cursor.execute("""
-        INSERT INTO sessions (id, quiz_id, student_name, time_remaining_seconds, status)
-        VALUES (?, ?, ?, ?, 'not_started')
-    """, (session_id, quiz_id, student_name, quiz['time_limit_seconds']))
-
-    conn.commit()
-    conn.close()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO sessions (id, quiz_id, student_name, token,
+                                  time_remaining_seconds, status)
+            VALUES (?, ?, ?, ?, ?, 'not_started')
+        """, (session_id, quiz_id, student_name, token, quiz['time_limit_seconds']))
+        conn.commit()
+    finally:
+        conn.close()
 
     return {
         "id": session_id,
         "quiz_id": quiz_id,
         "student_name": student_name,
+        "token": token,
         "time_remaining_seconds": quiz['time_limit_seconds'],
         "status": "not_started"
     }
@@ -214,11 +254,12 @@ def create_session(session_id: str, quiz_id: str,
 def get_session(session_id: str) -> Optional[dict]:
     """Fetch a session by ID, or return None if not found."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
-    row = cursor.fetchone()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        row = cursor.fetchone()
+    finally:
+        conn.close()
 
     return dict(row) if row else None
 
@@ -226,16 +267,16 @@ def get_session(session_id: str) -> Optional[dict]:
 def start_session(session_id: str) -> Optional[dict]:
     """Mark a session as in_progress and record the start time."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    now = datetime.now().isoformat()
-    cursor.execute("""
-        UPDATE sessions SET status = 'in_progress', started_at = ?
-        WHERE id = ? AND status = 'not_started'
-    """, (now, session_id))
-
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        cursor.execute("""
+            UPDATE sessions SET status = 'in_progress', started_at = ?
+            WHERE id = ? AND status = 'not_started'
+        """, (now, session_id))
+        conn.commit()
+    finally:
+        conn.close()
 
     return get_session(session_id)
 
@@ -243,42 +284,42 @@ def start_session(session_id: str) -> Optional[dict]:
 def update_session_time(session_id: str, time_remaining: int) -> None:
     """Persist the current remaining time for a session."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE sessions SET time_remaining_seconds = ? WHERE id = ?
-    """, (time_remaining, session_id))
-
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE sessions SET time_remaining_seconds = ? WHERE id = ?
+        """, (time_remaining, session_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def update_current_question(session_id: str, question_number: int) -> None:
     """Update which question the student is currently viewing."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE sessions SET current_question = ? WHERE id = ?
-    """, (question_number, session_id))
-
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE sessions SET current_question = ? WHERE id = ?
+        """, (question_number, session_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def complete_session(session_id: str, score: float) -> Optional[dict]:
     """Mark a session as completed with the final score."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    now = datetime.now().isoformat()
-    cursor.execute("""
-        UPDATE sessions SET status = 'completed', completed_at = ?, score = ?
-        WHERE id = ?
-    """, (now, score, session_id))
-
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        cursor.execute("""
+            UPDATE sessions SET status = 'completed', completed_at = ?, score = ?
+            WHERE id = ?
+        """, (now, score, session_id))
+        conn.commit()
+    finally:
+        conn.close()
 
     return get_session(session_id)
 
@@ -289,29 +330,28 @@ def complete_session(session_id: str, score: float) -> Optional[dict]:
 
 def save_response(session_id: str, question_id: str, answer: str,
                   time_spent_seconds: int = 0) -> dict:
-    """Save or update a student's answer. Time spent accumulates on re-answers."""
+    """Save or update a student's answer. Time spent is replaced on re-answer."""
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        # Check if correct
+        question = get_question(question_id)
+        is_correct = 1 if question and answer == question['correct_answer'] else 0
 
-    # Check if correct
-    question = get_question(question_id)
-    is_correct = 1 if question and answer == question['correct_answer'] else 0
-
-    now = datetime.now().isoformat()
-
-    cursor.execute("""
-        INSERT INTO responses (session_id, question_id, answer, is_correct,
-                               time_spent_seconds, answered_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(session_id, question_id) DO UPDATE SET
-            answer = excluded.answer,
-            is_correct = excluded.is_correct,
-            time_spent_seconds = time_spent_seconds + excluded.time_spent_seconds,
-            answered_at = excluded.answered_at
-    """, (session_id, question_id, answer, is_correct, time_spent_seconds, now))
-
-    conn.commit()
-    conn.close()
+        now = datetime.now().isoformat()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO responses (session_id, question_id, answer, is_correct,
+                                   time_spent_seconds, answered_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, question_id) DO UPDATE SET
+                answer = excluded.answer,
+                is_correct = excluded.is_correct,
+                time_spent_seconds = excluded.time_spent_seconds,
+                answered_at = excluded.answered_at
+        """, (session_id, question_id, answer, is_correct, time_spent_seconds, now))
+        conn.commit()
+    finally:
+        conn.close()
 
     return {"question_id": question_id, "answer": answer, "is_correct": bool(is_correct)}
 
@@ -319,51 +359,70 @@ def save_response(session_id: str, question_id: str, answer: str,
 def get_responses(session_id: str) -> list[dict]:
     """Return all responses for a session, joined with question metadata."""
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT r.*, q.question_number, q.correct_answer, q.points
-        FROM responses r
-        JOIN questions q ON q.id = r.question_id
-        WHERE r.session_id = ?
-        ORDER BY q.question_number
-    """, (session_id,))
-
-    rows = cursor.fetchall()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT r.*, q.question_number, q.correct_answer, q.points
+            FROM responses r
+            JOIN questions q ON q.id = r.question_id
+            WHERE r.session_id = ?
+            ORDER BY q.question_number
+        """, (session_id,))
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
 
     return [dict(row) for row in rows]
 
 
 def calculate_score(session_id: str) -> dict:
-    """Calculate earned points, possible points, and percentage for a session."""
+    """Calculate earned points, possible points, and percentage for a session.
+
+    Counts all quiz questions as possible points, not just answered ones.
+    """
     conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT
-            SUM(CASE WHEN r.is_correct = 1 THEN q.points ELSE 0 END) as earned,
-            SUM(q.points) as possible,
-            COUNT(*) as answered,
-            SUM(r.is_correct) as correct
-        FROM responses r
-        JOIN questions q ON q.id = r.question_id
-        WHERE r.session_id = ?
-    """, (session_id,))
+        # Get total possible points from ALL questions in the quiz
+        cursor.execute("""
+            SELECT SUM(q.points) as total_possible, COUNT(*) as total_questions
+            FROM questions q
+            JOIN sessions s ON s.quiz_id = q.quiz_id
+            WHERE s.id = ?
+        """, (session_id,))
+        totals = cursor.fetchone()
 
-    row = cursor.fetchone()
-    conn.close()
+        # Get earned points from answered questions
+        cursor.execute("""
+            SELECT
+                SUM(CASE WHEN r.is_correct = 1 THEN q.points ELSE 0 END) as earned,
+                COUNT(*) as answered,
+                SUM(r.is_correct) as correct
+            FROM responses r
+            JOIN questions q ON q.id = r.question_id
+            WHERE r.session_id = ?
+        """, (session_id,))
+        row = cursor.fetchone()
+    finally:
+        conn.close()
 
-    if row and row['possible']:
-        return {
-            "earned": row['earned'] or 0,
-            "possible": row['possible'],
-            "answered": row['answered'],
-            "correct": row['correct'] or 0,
-            "percentage": (row['earned'] or 0) / row['possible'] * 100
-        }
+    total_possible = totals['total_possible'] or 0
+    total_questions = totals['total_questions'] or 0
+    earned = (row['earned'] or 0) if row else 0
+    answered = (row['answered'] or 0) if row else 0
+    correct = (row['correct'] or 0) if row else 0
 
-    return {"earned": 0, "possible": 0, "answered": 0, "correct": 0, "percentage": 0}
+    percentage = (earned / total_possible * 100) if total_possible > 0 else 0
+
+    return {
+        "earned": earned,
+        "possible": total_possible,
+        "answered": answered,
+        "correct": correct,
+        "total_questions": total_questions,
+        "percentage": percentage
+    }
 
 
 # ============================================================
@@ -425,9 +484,9 @@ def seed_sample_quiz() -> None:
             correct_answer=q["answer"]
         )
 
-    print("Sample quiz created: demo-quiz")
+    logger.info("Sample quiz created: demo-quiz")
 
 
 if __name__ == "__main__":
     seed_sample_quiz()
-    print("Database initialized!")
+    logger.info("Database initialized!")

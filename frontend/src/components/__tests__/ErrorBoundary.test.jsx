@@ -35,7 +35,7 @@ describe('ErrorBoundary', () => {
 
   test('calls onReset and recovers when reset button clicked', async () => {
     const onReset = vi.fn()
-    const { rerender } = render(
+    render(
       <ErrorBoundary onReset={onReset}>
         <ThrowingChild />
       </ErrorBoundary>

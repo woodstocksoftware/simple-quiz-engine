@@ -180,3 +180,58 @@ def test_calculate_score_unanswered_counts_against(seed_quiz):
     assert score["earned"] == 1
     assert score["possible"] == 4
     assert score["percentage"] == 25.0
+
+
+# ── Session time updates ─────────────────────────────────
+
+
+def test_update_session_time(seed_quiz):
+    """update_session_time persists the remaining time."""
+    db = seed_quiz
+    db.create_session("s1", "test-quiz", "tok")
+    db.update_session_time("s1", 120)
+    session = db.get_session("s1")
+    assert session["time_remaining_seconds"] == 120
+
+
+def test_update_current_question(seed_quiz):
+    """update_current_question persists the question number."""
+    db = seed_quiz
+    db.create_session("s1", "test-quiz", "tok")
+    db.update_current_question("s1", 3)
+    session = db.get_session("s1")
+    assert session["current_question"] == 3
+
+
+# ── Error cases ───────────────────────────────────────────
+
+
+def test_create_session_quiz_not_found(isolated_db):
+    """Creating a session for a non-existent quiz raises ValueError."""
+    import pytest
+    with pytest.raises(ValueError, match="Quiz not found"):
+        isolated_db.create_session("s1", "nonexistent-quiz", "tok")
+
+
+# ── Seed data ─────────────────────────────────────────────
+
+
+def test_seed_sample_quiz(isolated_db):
+    """seed_sample_quiz creates the demo quiz with 5 questions."""
+    db = isolated_db
+    db.seed_sample_quiz()
+    quiz = db.get_quiz("demo-quiz")
+    assert quiz is not None
+    assert quiz["title"] == "Python Fundamentals Quiz"
+    assert quiz["time_limit_seconds"] == 300
+    questions = db.get_questions("demo-quiz")
+    assert len(questions) == 5
+
+
+def test_seed_sample_quiz_idempotent(isolated_db):
+    """Calling seed_sample_quiz twice doesn't create duplicates."""
+    db = isolated_db
+    db.seed_sample_quiz()
+    db.seed_sample_quiz()
+    questions = db.get_questions("demo-quiz")
+    assert len(questions) == 5

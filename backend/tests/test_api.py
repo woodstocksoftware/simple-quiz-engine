@@ -104,3 +104,44 @@ def test_get_session_excludes_sensitive_fields(seeded_client):
 def test_get_session_not_found(client):
     resp = client.get("/api/sessions/nonexistent")
     assert resp.status_code == 404
+
+
+# ── GET /api/quizzes/{quiz_id} edge cases ─────────────────
+
+
+def test_get_quiz_id_too_long(client):
+    """Quiz ID over 100 chars should return 400."""
+    long_id = "x" * 101
+    resp = client.get(f"/api/quizzes/{long_id}")
+    assert resp.status_code == 400
+
+
+# ── Rate limiter ──────────────────────────────────────────
+
+
+def test_rate_limit_allows_within_limit():
+    """Rate limiter should allow requests within the window."""
+    from app.main import _check_rate_limit, _rate_limit_store
+
+    _rate_limit_store.clear()
+    assert _check_rate_limit("127.0.0.1") is True
+
+
+def test_rate_limit_blocks_over_limit():
+    """Rate limiter should block after exceeding max requests."""
+    from app.main import _check_rate_limit, _rate_limit_store, RATE_LIMIT_MAX
+
+    _rate_limit_store.clear()
+    for _ in range(RATE_LIMIT_MAX):
+        assert _check_rate_limit("10.0.0.1") is True
+    # Next request should be blocked
+    assert _check_rate_limit("10.0.0.1") is False
+
+
+def test_rate_limit_separate_ips():
+    """Different IPs have independent rate limits."""
+    from app.main import _check_rate_limit, _rate_limit_store
+
+    _rate_limit_store.clear()
+    assert _check_rate_limit("192.168.1.1") is True
+    assert _check_rate_limit("192.168.1.2") is True

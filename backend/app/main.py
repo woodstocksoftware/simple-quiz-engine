@@ -113,7 +113,7 @@ class QuizSessionManager:
             try:
                 await ws.send_json(message)
             except Exception:
-                pass  # Connection may have closed
+                logger.debug("Failed to send message to session %s", session_id)
 
     def start_question_timer(self, session_id: str) -> None:
         """Record the current time as the start of a question attempt."""

@@ -6,6 +6,7 @@ Real-time WebSocket quiz engine for educational assessments. Students connect, a
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black)](https://react.dev)
 [![WebSocket](https://img.shields.io/badge/WebSocket-Real--time-orange)](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
+[![CI](https://github.com/woodstocksoftware/simple-quiz-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/woodstocksoftware/simple-quiz-engine/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Features
@@ -200,6 +201,8 @@ simple-quiz-engine/
 
 ## Testing
 
+57 backend tests (pytest, 92% coverage) and 22 frontend tests (Vitest).
+
 ```bash
 # Backend
 cd backend
@@ -210,8 +213,6 @@ pytest
 cd frontend
 npm test
 ```
-
-> Tests are planned but not yet implemented. Contributions welcome!
 
 ## Contributing
 

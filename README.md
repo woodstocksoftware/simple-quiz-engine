@@ -9,6 +9,8 @@ Real-time WebSocket quiz engine for educational assessments. Students connect, a
 [![CI](https://github.com/woodstocksoftware/simple-quiz-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/woodstocksoftware/simple-quiz-engine/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+Part of [AdaptiveTest developer API](https://adaptivetest.io/developers), built by Desert's Edge Solutions.
+
 ## Features
 
 - **Real-time WebSocket communication** — instant question delivery, answer confirmation, and live timer updates
